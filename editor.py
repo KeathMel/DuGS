@@ -361,9 +361,8 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
         self._panel_css = (f"background: {panel}; color:{text}; "
                            f"font-family:monospace; font-size:9px; "
                            f"border:1px solid {border};")
-        for w in (getattr(self, "results", None), getattr(self, "json_view", None)):
-            if w is not None:
-                w.setStyleSheet(self._panel_css)
+        # each panel styles itself — don't also style its widgets from here or
+        # the two fight and the panel ends up with whichever ran last
         self._panels_notify("apply_theme", self._panel_css, (panel, text, border))
         self.update()
 

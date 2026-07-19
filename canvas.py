@@ -396,19 +396,21 @@ class Canvas(QWidget):
                 p.drawPixmap(x, y, scaled)
                 # darken slightly so nodes and wires stay readable on top
                 p.fillRect(self.rect(), QColor(0, 0, 0, 90))
-            else:
-                p.fillRect(self.rect(), QColor(18, 18, 18))
+            # no image -> leave the widget's own background alone rather than
+            # painting over whatever the app stylesheet already gave us
 
             # n8n-style dot grid
             if s.get("canvas_dots", True):
                 step = 24 * self.scale
-                if step >= 6:
-                    p.setPen(QPen(QColor(255, 255, 255, 28), 1))
+                # skip when the dots would be denser than useful (also stops
+                # the loop below from running tens of thousands of times)
+                if step >= 8:
+                    p.setPen(QPen(QColor(255, 255, 255, 30), 1))
                     ox = self.offset.x() % step
                     oy = self.offset.y() % step
-                    yy = oy
+                    yy = oy - step
                     while yy < self.height():
-                        xx = ox
+                        xx = ox - step
                         while xx < self.width():
                             p.drawPoint(int(xx), int(yy))
                             xx += step
