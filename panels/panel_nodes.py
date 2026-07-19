@@ -51,6 +51,10 @@ class NodesPanel(Panel):
         if colors and getattr(self.editor, "palette", None) is not None:
             panel, text, border = colors
             self.editor.palette.setStyleSheet(
-                "QListWidget::item { padding: 0px; }"
-                f"QListWidget{{background:{panel}; color:{text}; "
-                f"border:1px solid {border};}}")
+                f"QListWidget{{background:{panel};color:{text};"
+                f"border:1px solid {border};}}"
+                "QListWidget::item{padding:0px;}")
+            if getattr(self.editor, "palette_search", None) is not None:
+                self.editor.palette_search.setStyleSheet(
+                    f"QLineEdit{{background:{panel};color:{text};"
+                    f"border:1px solid {border};padding:3px;}}")

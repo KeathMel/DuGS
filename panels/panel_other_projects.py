@@ -38,4 +38,6 @@ class OtherProjectsPanel(Panel):
         if self.widget is not None and colors:
             panel, text, border = colors
             self.widget.setStyleSheet(
-                f"background:{panel}; color:{text}; border:1px solid {border};")
+                f"QListWidget{{background:{panel};color:{text};"
+                f"border:1px solid {border};}}"
+                f"QListWidget::item{{color:{text};}}")

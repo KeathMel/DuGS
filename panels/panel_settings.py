@@ -39,7 +39,12 @@ class SettingsPanel(Panel):
             pass
 
     def apply_theme(self, css, colors):
-        if self.widget is not None and colors:
-            panel, _text, border = colors
-            self.widget.setStyleSheet(
-                f"background:{panel}; border:1px solid {border};")
+        if self.widget is None or not colors:
+            return
+        panel, text, border = colors
+        # style the scroll area and its inner host, and make the child form
+        # widgets inherit the text colour instead of staying hard-coded
+        self.widget.setStyleSheet(
+            f"QScrollArea{{background:{panel};border:1px solid {border};}}"
+            f"QScrollArea > QWidget > QWidget{{background:transparent;}}"
+            f"QLabel{{color:{text};background:transparent;}}")
