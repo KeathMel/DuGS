@@ -13,11 +13,20 @@ Editor instance and it can reach self.canvas, self.meta_by_type, and so on.
 Kept in its own file because it is by far the biggest single piece of the
 editor UI and it changes independently of everything else.
 """
+import json
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtWidgets import (
+    QLabel, QCheckBox, QTreeWidgetItem, QDialog, QVBoxLayout, QHBoxLayout,
+    QFormLayout, QLineEdit, QPlainTextEdit, QComboBox, QPushButton,
+    QScrollArea, QWidget,
+)
 
 from theme import ACCENT
+from node_base import resolve_expr
+from storage import list_credentials
+from editor_widgets import DragJsonTree, DropLineEdit, DropTextEdit
 
 
 class NodePopupMixin:
