@@ -381,20 +381,33 @@ class Canvas(QWidget):
         self._bg_pixmap_path = path
         return pm
 
+    def fog_color(self):
+        """The dark haze laid over a see-through background.
+
+        Without it, nodes and wires sit on whatever is behind the window and
+        become unreadable. This keeps things legible while still letting the
+        desktop show through.
+        """
+        s = getattr(self, "ui_settings", {}) or {}
+        try:
+            alpha = int(s.get("fog_opacity", 150))
+        except (TypeError, ValueError):
+            alpha = 150
+        return QColor(0, 0, 0, max(0, min(255, alpha)))
+
     def base_bg_color(self):
         """The canvas's own opaque background colour.
 
-        Comes from the settings popup's base colour so the canvas matches the
-        panels, defaulting to the same grey the home screen uses.
+        Uses the panel colour chosen in the settings popup so the canvas and
+        the panels match, falling back to the shared grey the home screen uses.
         """
-        # GREY_BG is the shared base grey the home screen uses; keeping the
-        # canvas on the same colour makes the app look like one piece.
+        s = getattr(self, "ui_settings", {}) or {}
         try:
             from home_screen import GREY_BG
             default = GREY_BG
         except Exception:
             default = "#3a3a3a"
-        c = QColor(default)
+        c = QColor(s.get("panel_color") or default)
         return c if c.isValid() else QColor("#3a3a3a")
 
     def _image_luminance(self, pm):
@@ -445,13 +458,15 @@ class Canvas(QWidget):
         no_bg = s.get("canvas_no_background", False)
 
         if no_bg:
-            # "no background" means paint nothing of our own — the old
-            # see-through look. The window is translucent, so clear to fully
-            # transparent rather than skipping the fill entirely, otherwise the
-            # previous frame is never erased and the canvas smears.
+            # "No background" means see-through rather than a solid canvas —
+            # but the window is translucent, so the previous frame still has to
+            # be erased or the canvas smears. Clear to transparent, then lay a
+            # dark fog over it: enough to keep nodes and wires readable while
+            # whatever is behind the app shows through.
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
             p.fillRect(self.rect(), QColor(0, 0, 0, 0))
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            p.fillRect(self.rect(), self.fog_color())
         else:
             p.fillRect(self.rect(), self.base_bg_color())
             pm = self._bg_image()

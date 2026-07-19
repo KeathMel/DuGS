@@ -338,13 +338,26 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
         The app window is translucent (ui.py sets WA_TranslucentBackground), so
         a screen that paints nothing lets whatever was behind it — the home
         screen — stay visible underneath the workflow. Filling here stops that.
+
+        With "no background" on, the editor goes see-through with a dark fog
+        instead, so the desktop shows through but everything stays readable.
         """
-        try:
-            from home_screen import GREY_BG as base
-        except Exception:
-            base = "#3a3a3a"
+        s = getattr(self, "ui_settings", {}) or {}
+        no_bg = s.get("canvas_no_background", False)
         p = QPainter(self)
-        p.fillRect(self.rect(), _QColor(base))
+        if no_bg:
+            fog = max(0, min(255, int(s.get("fog_opacity", 150))))
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            p.fillRect(self.rect(), _QColor(0, 0, 0, 0))
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            p.fillRect(self.rect(), _QColor(0, 0, 0, fog))
+        else:
+            try:
+                from home_screen import GREY_BG as _grey
+            except Exception:
+                _grey = "#3a3a3a"
+            # the user picks the panel colour in the settings popup
+            p.fillRect(self.rect(), _QColor(s.get("panel_color") or _grey))
         p.end()
         super().paintEvent(event)
 
@@ -480,26 +493,46 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
         except Exception:
             pass
 
+        no_bg = s.get("canvas_no_background", False)
         panel, text, border = self._panel_colors(s)
+        if no_bg:
+            # see-through: modules paint no fill of their own so the editor's
+            # fog is what shows behind their text
+            panel = "transparent"
         self._panel_css = (f"background: {panel}; color:{text}; "
                            f"font-family:monospace; font-size:9px; "
                            f"border:1px solid {border};")
         # The window is translucent, so each panel's container must paint an
         # opaque background or old frames stay on screen and the UI smears.
         try:
-            from home_screen import GREY_BG as base
+            from home_screen import GREY_BG as _grey
         except Exception:
-            base = "#3a3a3a"
-        # panels and the module frames inside them must paint opaque, or the
-        # translucent window lets old frames show through
+            _grey = "#3a3a3a"
+        # the user can pick the panel colour in the settings popup; the
+        # no-background switch overrides it while it is on
+        base = s.get("panel_color") or _grey
+        # "No background" is app-wide, not canvas-only: the panels go
+        # see-through too, with a dark fog behind them so their contents stay
+        # readable against whatever is showing through.
+        if no_bg:
+            fog = int(s.get("fog_opacity", 150))
+            fog = max(0, min(255, fog))
+            panel_bg = f"rgba(0,0,0,{fog / 255:.3f})"
+            frame_bg = "transparent"
+        else:
+            panel_bg = base
+            frame_bg = base
+
         for side, box in getattr(self, "panels_by_side", {}).items():
-            box.setStyleSheet(f"QWidget#panelbox_{side}{{background:{base};}}")
-            box.setAutoFillBackground(True)
+            box.setStyleSheet(f"QWidget#panelbox_{side}{{background:{panel_bg};}}")
+            # opaque only when we actually have a solid colour; a see-through
+            # panel must NOT auto-fill or it paints over its own contents
+            box.setAutoFillBackground(not no_bg)
         for m in getattr(self, "panels", []):
             if m.container is not None:
                 m.container.setStyleSheet(
-                    f"QWidget#modframe_{m.ID}{{background:{base};}}")
-                m.container.setAutoFillBackground(True)
+                    f"QWidget#modframe_{m.ID}{{background:{frame_bg};}}")
+                m.container.setAutoFillBackground(not no_bg)
         # each panel then styles its own inner widget
         self._panels_notify("apply_theme", self._panel_css, (panel, text, border))
         self.update()

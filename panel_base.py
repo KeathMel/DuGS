@@ -223,6 +223,10 @@ class ModuleFrame(QWidget):
                 self._drag_from = e.globalPosition().toPoint()
                 self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
                 return True          # swallow it so the child ignores it
+            if e.button() == Qt.MouseButton.RightButton:
+                # right-click anywhere on the module offers to take it out
+                self._context_menu(e.globalPosition().toPoint())
+                return True
         elif et == QEvent.Type.MouseButtonRelease:
             if e.button() == Qt.MouseButton.MiddleButton and self._drag_from is not None:
                 self.unsetCursor()
@@ -232,6 +236,25 @@ class ModuleFrame(QWidget):
                     self.editor.move_module(self.module, target)
                 return True
         return super().eventFilter(obj, e)
+
+    def _context_menu(self, gpos):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu{background:#1e1e1e;color:#ddd;font-family:monospace;"
+            "font-size:11px;border:1px solid #555;}"
+            "QMenu::item:selected{background:#333;}")
+        act_remove = menu.addAction(f"Remove {self.module.TITLE}")
+        menu.addSeparator()
+        # quick way to send it to another panel without the middle-drag
+        for side, box in self.editor.panels_by_side.items():
+            if box is self.panel:
+                continue
+            a = menu.addAction(f"Move to {side} panel")
+            a.triggered.connect(
+                lambda _c, b=box: self.editor.move_module(self.module, b))
+        act_remove.triggered.connect(
+            lambda: self.editor.toggle_module(self.module, self.panel, False))
+        menu.exec(gpos)
 
 
 # ----------------------------------------------------------------- PANEL BOX

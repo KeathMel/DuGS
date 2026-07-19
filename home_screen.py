@@ -16,7 +16,7 @@ import weakref
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QListWidget,
     QListWidgetItem, QStackedWidget, QInputDialog, QMenu, QMessageBox, QLineEdit,
-    QDialog, QColorDialog, QFileDialog
+    QDialog, QColorDialog, QFileDialog, QSlider
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPainterPath, QIcon, QPixmap, QAction
@@ -48,7 +48,9 @@ DEFAULT_HOME_UI_SETTINGS = {
     # --- workflow/canvas (editor.py + canvas.py) ---
     "canvas_dots": True,          # n8n-style dot grid on the canvas
     "canvas_bg_image": None,      # absolute path to a canvas background image
-    "canvas_no_background": False,  # True = canvas paints nothing (old look)
+    "canvas_no_background": False,  # True = see-through everywhere, dark fog
+    "panel_color": None,          # user-picked panel/canvas background colour
+    "fog_opacity": 150,           # how dark the fog is when see-through (0-255)
 }
 
 
@@ -420,6 +422,8 @@ class HomeSettingsDialog(QDialog):
         self._canvas_bg_image = s.get("canvas_bg_image")
         self._canvas_dots = s.get("canvas_dots", True)
         self._canvas_no_background = s.get("canvas_no_background", False)
+        self._panel_color = s.get("panel_color") or GREY_BG
+        self._fog_opacity = int(s.get("fog_opacity", 150))
 
         outer = QVBoxLayout(self); outer.setSpacing(14)
 
@@ -534,12 +538,66 @@ class HomeSettingsDialog(QDialog):
         row3.addWidget(self.canvas_no_bg_switch)
         row3.addStretch()
         lay.addLayout(row3)
-        self.canvas_no_bg_hint = QLabel("Removes the grey/image/dots entirely — the plain look it had before.")
+        self.canvas_no_bg_hint = QLabel("Everything goes see-through with a dark fog behind it.")
         self.canvas_no_bg_hint.setStyleSheet("color:#999;font-family:monospace;font-size:11px;")
         lay.addWidget(self.canvas_no_bg_hint)
 
+        # --- panel colour -------------------------------------------------
+        row4 = QHBoxLayout()
+        row4.addWidget(QLabel("Panel color:"))
+        self.panel_swatch = QLabel()
+        self.panel_swatch.setFixedSize(34, 18)
+        self._paint_swatch(self.panel_swatch, self._panel_color)
+        row4.addWidget(self.panel_swatch)
+        pick_panel = QPushButton("Choose\u2026")
+        pick_panel.clicked.connect(self._pick_panel_color)
+        row4.addWidget(pick_panel)
+        reset_panel = QPushButton("Reset")
+        reset_panel.clicked.connect(self._reset_panel_color)
+        row4.addWidget(reset_panel)
+        row4.addStretch()
+        lay.addLayout(row4)
+        self.panel_hint = QLabel(
+            "Background colour of the panels and canvas. "
+            "Ignored while No background is on.")
+        self.panel_hint.setStyleSheet("color:#999;font-family:monospace;font-size:11px;")
+        lay.addWidget(self.panel_hint)
+
+        # --- fog strength -------------------------------------------------
+        row5 = QHBoxLayout()
+        row5.addWidget(QLabel("Fog:"))
+        self.fog_slider = QSlider(Qt.Orientation.Horizontal)
+        self.fog_slider.setRange(0, 255)
+        self.fog_slider.setValue(self._fog_opacity)
+        self.fog_slider.setFixedWidth(160)
+        self.fog_slider.valueChanged.connect(self._on_fog_change)
+        row5.addWidget(self.fog_slider)
+        self.fog_value = QLabel(str(self._fog_opacity))
+        self.fog_value.setStyleSheet("color:#999;font-family:monospace;font-size:11px;")
+        row5.addWidget(self.fog_value)
+        row5.addStretch()
+        lay.addLayout(row5)
+        self.fog_hint = QLabel(
+            "How dark the haze is when No background is on, so things stay readable.")
+        self.fog_hint.setStyleSheet("color:#999;font-family:monospace;font-size:11px;")
+        lay.addWidget(self.fog_hint)
+
         lay.addStretch()
         return page
+
+    def _pick_panel_color(self):
+        c = QColorDialog.getColor(QColor(self._panel_color), self, "Pick Panel Color")
+        if c.isValid():
+            self._panel_color = c.name()
+            self._paint_swatch(self.panel_swatch, self._panel_color)
+
+    def _reset_panel_color(self):
+        self._panel_color = GREY_BG
+        self._paint_swatch(self.panel_swatch, self._panel_color)
+
+    def _on_fog_change(self, v):
+        self._fog_opacity = int(v)
+        self.fog_value.setText(str(v))
 
     # -- shared helpers -------------------------------------------------------
     def _tag(self, t):
@@ -623,6 +681,8 @@ class HomeSettingsDialog(QDialog):
         s["canvas_bg_image"] = self._canvas_bg_image
         s["canvas_dots"] = self._canvas_dots
         s["canvas_no_background"] = self._canvas_no_background
+        s["panel_color"] = self._panel_color
+        s["fog_opacity"] = self._fog_opacity
         save_home_ui_settings(s)
         broadcast_theme_update()
         self.accept()
