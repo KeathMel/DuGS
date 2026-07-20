@@ -18,6 +18,8 @@ Run the same command again later to update.
 
 After that just launch DuGS from your app menu, or run `~/DuGS/DuGS.sh`.
 
+Linux only for now. The app itself runs anywhere Python and PyQt6 do, its only the installer that is Linux specific.
+
 ---
 
 ## REQUIRMENTS
@@ -58,6 +60,25 @@ find . -name __pycache__ -type d -exec rm -rf {} +
 
 ---
 
+## THE EDITOR LAYOUT
+
+The tools around the canvas are not fixed in place. Each one is a MODULE, and
+they sit inside PANELS along the left, right and bottom edges.
+
+- The arrow on each edge pulls that panel open or shut.
+- The `+` at the bottom of a panel lists every module it can show. Tick one to
+  add it, untick to take it away.
+- Hold the middle mouse button on a module and drop it on another panel to move
+  it. Right click a module for the same thing plus remove.
+- Several modules in one panel get the three dot grip lines between them so you
+  can resize them against each other.
+- Your layout is saved, so its there again next time you open DuGS.
+
+First launch gives you a starting layout (settings, projects and run log on the
+left, nodes on the right, code on the bottom). After that its yours.
+
+---
+
 ## WHAT THE FILES DO
 
 ### UI
@@ -65,12 +86,30 @@ find . -name __pycache__ -type d -exec rm -rf {} +
 | File | What it does |
 |---|---|
 | `ui.py` | The entry point. Builds one window holding three screens (Home, Editor, TabelEditor) and switches between them. Everything else lives in its own module. |
-| `home_screen.py` | The landing screen. Project grid, New Project popup where you pick Normal or Servo, credentials tab, tabels list. Servo projects show up red. |
-| `editor.py` | The main editor. Palette on the left, canvas in the middle, JSON or CODE panel bottom right. Run / Export Code / Simulate buttons, node popup, undo redo, the red theme for servo projects. |
-| `canvas.py` | The actual node graph. Draws nodes and wires, drag, zoom, pan, box select and mass move, wire delete badges, hover a node and press Tab for its popup. |
-| `editor_settings.py` | The right hand settings panel for the selected node. |
+| `home_screen.py` | The landing screen. Project grid, New Project popup where you pick Normal or Servo, tabels, credentials, and the settings popup. Servo projects show up red. |
+| `home_preview.py` | The detail pane on the home screen. Shows what nodes a selected project uses, like an inventory with a count on each one, plus a description you can edit. |
+| `editor.py` | The editor shell. Top bar, canvas, and the panel system that holds the modules. Run / Export Code / Simulate, undo redo, autosave, the red theme for servo projects. |
+| `canvas.py` | The actual node graph. Draws nodes and wires, drag, zoom, pan, box select and mass move, wire delete badges, hover a node and press Tab for its popup. Also draws the background, the dot grid and the see-through mode. |
+| `node_popup.py` | The big node popup (Tab on a node, or double click). Input, parameters and output side by side, drag a field into a box to make a `{{ }}` reference. |
+| `panel_base.py` | The module and panel system. What a module is, how panels hold them, the grip dots, the arrows, the `+` menu. |
+| `editor_settings.py` | Builds the parameter form for whichever node is selected. |
+| `editor_widgets.py` | Small custom widgets the editor is made of: the splitters with grip handles, and the drag-and-drop parameter boxes. |
+| `editor_workers.py` | The background threads, so running or simulating never freezes the window. |
 | `tabel_editor.py` | The spreadsheet grid editor for tabels. |
 | `theme.py` | Colors, accent, node size, the stylesheet. |
+
+### MODULES (the tools around the canvas)
+
+Each of these is a file in `panels/`. Drop a new one in and it turns up in the
+`+` menu.
+
+| File | What it does |
+|---|---|
+| `panel_nodes.py` | The node palette you drag from, with its search box. |
+| `panel_settings.py` | The parameters of the selected node. |
+| `panel_run_log.py` | The output from a run, an export or a simulation. |
+| `panel_other_projects.py` | Your other projects, click one to switch. |
+| `panel_json.py` | The workflow as JSON, or the live Arduino code for servo projects, with a copy button. |
 
 ### ENGINE (the n8n side)
 
@@ -106,9 +145,12 @@ find . -name __pycache__ -type d -exec rm -rf {} +
 
 | Folder | Whats in it |
 |---|---|
-| `nodes/` | Every node, one file each. Both kinds live here. Normal nodes are `core_*`, `logic_*`, `web_*`, `action_*`, `trigger_*`, `webhook_*`. Robotics nodes are `dev_*` and `pins.py`. |
+| `nodes/` | The normal nodes, one file each: `core_*`, `logic_*`, `web_*`, `action_*`, `trigger_*`, `webhook_*`. |
+| `robotics_nodes/` | The robotics nodes, one file each: `dev_*` and `pins.py`. |
+| `panels/` | The modules that sit around the canvas. |
 | `icons/` | The app icon in all the sizes a desktop needs. |
-| `nodes_images/` | Icons shown on the nodes themselves in the palette and canvas. |
+| `nodes_images/` | Icons for the normal nodes, shown in the palette and on the canvas. |
+| `robotics_nodes_images/` | Same but for the robotics nodes. |
 | `projects/` | Your saved workflows. |
 | `tabels/` | Your saved tabels. |
 | `sketches/` | Arduino code that Export Code writes out, one folder per project. |
@@ -153,6 +195,58 @@ find . -name __pycache__ -type d -exec rm -rf {} +
 
 ## ADDING A NODE
 
-Drop a new file in `nodes/`, restart api.py, it shows up. Normal nodes subclass `Node` from `node_base.py` and have a `run()`. Robotics nodes subclass `DeviceNode` from `device_base.py`, their type starts with `device.`, and they emit C++ instead of running. Copy an existing file thats close to what you want and change it.
+Normal nodes go in `nodes/`, robotics nodes go in `robotics_nodes/`. Restart
+api.py and it shows up.
 
-To put it in a specific palette group, add its type to `NODE_GROUPS` or `ROBOTICS_GROUPS` in `editor.py`.
+Normal nodes subclass `Node` from `node_base.py` and have a `run()`. Robotics
+nodes subclass `DeviceNode` from `device_base.py`, their type starts with
+`device.`, and they emit C++ instead of running. Copy an existing file thats
+close to what you want and change it.
+
+To put it in a specific palette group, add its type to `NODE_GROUPS` or
+`ROBOTICS_GROUPS` in `editor.py`.
+
+For its icon, drop a png in `nodes_images/` (or `robotics_nodes_images/`) named
+after the node type. For type `core.set` any of `set.png`, `core.set.png` or
+`core_set.png` works. Add the image before starting the app.
+
+---
+
+## ADDING A MODULE
+
+Same idea as nodes, but for the tools around the canvas. Drop a file in
+`panels/`, restart, and it turns up in the `+` menu on every panel.
+
+```python
+from panel_base import Panel
+from PyQt6.QtWidgets import QLabel
+
+class NotesModule(Panel):
+    ID    = "notes"       # unique, used when saving the layout
+    TITLE = "NOTES"       # shown in the header and the + menu
+    SIDE  = "left"        # where it goes if nothing is saved yet
+    ORDER = 50            # order within that side
+    STRETCH = 1           # share of space against its neighbours
+
+    def build(self):
+        return QLabel("hello")
+```
+
+`self.editor` gets you the Editor, so a module can reach the canvas, the
+current project, the API, whatever it needs.
+
+There are optional hooks you can add if you want them, all of them safe to
+leave out:
+
+| Hook | When it fires |
+|---|---|
+| `on_project_opened(name)` | a project was opened or switched |
+| `on_selection_changed(node)` | a node was selected, None when deselected |
+| `on_workflow_changed()` | the graph changed |
+| `on_run_event(evt)` | a live run event arrived |
+| `refresh()` | asked to redraw itself |
+| `apply_theme(css, colors)` | the appearance settings changed |
+| `header_widgets()` | extra buttons to sit next to the title |
+
+A module that crashes gets logged and skipped instead of taking the editor down
+with it.
