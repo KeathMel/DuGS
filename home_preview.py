@@ -1,163 +1,281 @@
 """
-home_preview.py — the preview pane on the home screen.
+home_preview.py — the detail pane on the home screen.
 
-Selecting a project draws a small picture of its node graph, so you can tell
-projects apart at a glance instead of by filename alone. It reads the saved
-workflow JSON directly and draws a simplified version: nodes as rounded blocks,
-connections as lines, coloured red for servo projects and blue for normal ones.
+Selecting one project shows what is actually inside it, laid out like an
+inventory: every node type it uses as a tile, with a count in the corner
+showing how many times that node appears. Under that is a free-text
+description you can edit, so a project can say what it is for rather than
+relying on the filename.
 
-Under the picture is a short summary — how many nodes, what kind of project,
-when it was last saved.
+Nothing is selected, or several things are, means there is nothing single to
+describe — the pane goes back to empty rather than showing stale detail.
 """
 import os
-import json
-from datetime import datetime
 
-from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
+    QListWidgetItem, QTextEdit, QSizePolicy,
+)
 
 
-class CanvasPreview(QWidget):
-    """Draws a miniature of a workflow's node graph."""
+class NodeTile(QWidget):
+    """One node type in the inventory: its icon, name, and how many are used."""
 
-    def __init__(self, accent="#7ecfff"):
+    def __init__(self, type_id, title, count, pixmap=None, servo=False):
         super().__init__()
-        self.accent = accent
-        self.workflow = None
-        self.setMinimumHeight(150)
-
-    def set_workflow(self, wf):
-        self.workflow = wf
-        self.update()
+        self.type_id = type_id
+        self.title = title
+        self.count = count
+        self.pixmap = pixmap
+        self.servo = servo
+        self.setFixedSize(58, 58)
+        self.setToolTip(f"{title} \u00d7 {count}")
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self.rect().adjusted(0, 0, -1, -1)
+        r = self.rect().adjusted(1, 1, -1, -1)
 
-        # the frame is always drawn, so the pane reads as a defined area even
-        # with nothing selected
-        p.setPen(QPen(QColor(255, 255, 255, 28), 1))
-        p.setBrush(QBrush(QColor(0, 0, 0, 40)))
-        p.drawRoundedRect(QRectF(r), 6, 6)
+        edge = QColor("#ff6b6b") if self.servo else QColor(255, 255, 255, 55)
+        p.setPen(edge)
+        p.setBrush(QColor(0, 0, 0, 90))
+        p.drawRoundedRect(r, 5, 5)
 
-        wf = self.workflow
-        nodes = (wf or {}).get("nodes") or []
-        if not nodes:
-            p.setPen(QColor(255, 255, 255, 70))
-            f = QFont("monospace"); f.setPointSize(9); p.setFont(f)
-            msg = "no preview" if wf is None else "empty workflow"
-            p.drawText(r, Qt.AlignmentFlag.AlignCenter, msg)
-            return
+        if self.pixmap is not None and not self.pixmap.isNull():
+            pm = self.pixmap.scaled(30, 30, Qt.AspectRatioMode.KeepAspectRatio,
+                                    Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(r.center().x() - pm.width() // 2,
+                         r.top() + 6, pm)
+        else:
+            # no icon for this node type: show a short bit of its name instead
+            p.setPen(QColor(210, 210, 210))
+            f = QFont("monospace"); f.setPointSize(7); p.setFont(f)
+            short = self.title.split()[0][:6]
+            p.drawText(r.adjusted(0, 4, 0, -18),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                       short)
 
-        servo = (wf.get("kind") == "servo")
-        node_col = QColor("#ff6b6b") if servo else QColor(self.accent)
+        # the name along the bottom
+        p.setPen(QColor(170, 170, 170))
+        f2 = QFont("monospace"); f2.setPointSize(6); p.setFont(f2)
+        name = self.title if len(self.title) <= 10 else self.title[:9] + "\u2026"
+        p.drawText(r.adjusted(2, 0, -2, -3),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+                   name)
 
-        # work out the graph's bounds so it can be scaled to fit the pane
-        xs = [float(n.get("x", 0)) for n in nodes]
-        ys = [float(n.get("y", 0)) for n in nodes]
-        minx, maxx = min(xs), max(xs) + 90
-        miny, maxy = min(ys), max(ys) + 60
-        gw = max(1.0, maxx - minx)
-        gh = max(1.0, maxy - miny)
-
-        pad = 12
-        avail_w = r.width() - pad * 2
-        avail_h = r.height() - pad * 2
-        scale = min(avail_w / gw, avail_h / gh, 0.5)
-        # centre whatever is left over
-        ox = r.left() + pad + (avail_w - gw * scale) / 2
-        oy = r.top() + pad + (avail_h - gh * scale) / 2
-
-        def pos(n):
-            return QPointF(ox + (float(n.get("x", 0)) - minx) * scale,
-                           oy + (float(n.get("y", 0)) - miny) * scale)
-
-        by_name = {n.get("name"): n for n in nodes}
-
-        # wires first, so the blocks sit on top
-        p.setPen(QPen(QColor(255, 255, 255, 55), 1))
-        for src, links in ((wf.get("connections") or {}).items()):
-            a = by_name.get(src)
-            if a is None:
-                continue
-            for link in links or []:
-                b = by_name.get(link.get("to"))
-                if b is None:
-                    continue
-                pa = pos(a); pb = pos(b)
-                bw = 90 * scale; bh = 60 * scale
-                p.drawLine(QPointF(pa.x() + bw, pa.y() + bh / 2),
-                           QPointF(pb.x(), pb.y() + bh / 2))
-
-        # the nodes
-        for n in nodes:
-            q = pos(n)
-            bw = max(4.0, 90 * scale)
-            bh = max(3.0, 60 * scale)
-            p.setPen(QPen(node_col, 1))
-            p.setBrush(QBrush(QColor(0, 0, 0, 120)))
-            p.drawRoundedRect(QRectF(q.x(), q.y(), bw, bh),
-                              min(3.0, bw / 4), min(3.0, bh / 4))
+        # the count badge, bottom-right, only when there is more than one
+        if self.count > 1:
+            f3 = QFont("monospace"); f3.setPointSize(7); f3.setBold(True)
+            p.setFont(f3)
+            txt = str(self.count)
+            bw = 13 + (len(txt) - 1) * 5
+            bx = r.right() - bw - 1
+            by = r.bottom() - 13
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, 190))
+            p.drawRoundedRect(bx, by, bw, 12, 3, 3)
+            p.setPen(QColor("#ff6b6b") if self.servo else QColor("#7ecfff"))
+            p.drawText(bx, by, bw, 12, Qt.AlignmentFlag.AlignCenter, txt)
 
 
 class PreviewPane(QWidget):
-    """The preview picture plus a short summary underneath."""
+    """The project detail pane: node inventory on top, description below."""
 
     def __init__(self, accent="#7ecfff"):
         super().__init__()
         self.accent = accent
+        self.project = None
+        self._meta = {}        # type_id -> {title, icon path}
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
+        lay.setSpacing(8)
 
-        self.title = QLabel("select a project")
+        self.title = QLabel("nothing selected")
         self.title.setStyleSheet(
             "color:#eee;font-family:monospace;font-size:13px;font-weight:bold;")
         lay.addWidget(self.title)
 
-        self.canvas = CanvasPreview(accent)
-        lay.addWidget(self.canvas, 1)
-
         self.info = QLabel("")
         self.info.setStyleSheet("color:#888;font-family:monospace;font-size:10px;")
-        self.info.setWordWrap(True)
         lay.addWidget(self.info)
 
+        # ---- the inventory grid
+        self.grid = QListWidget()
+        self.grid.setViewMode(QListWidget.ViewMode.IconMode)
+        self.grid.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.grid.setMovement(QListWidget.Movement.Static)
+        self.grid.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.grid.setSpacing(4)
+        self.grid.setStyleSheet(
+            "QListWidget{background:rgba(0,0,0,0.18);"
+            "border:1px solid rgba(255,255,255,0.10);border-radius:6px;}")
+        lay.addWidget(self.grid, 1)
+
+        # ---- description, with its edit button bottom-right
+        self.desc_label = QLabel("DESCRIPTION")
+        self.desc_label.setStyleSheet(
+            "color:#777;font-family:monospace;font-size:9px;")
+        lay.addWidget(self.desc_label)
+
+        self.desc = QTextEdit()
+        self.desc.setReadOnly(True)
+        self.desc.setFixedHeight(76)
+        self.desc.setStyleSheet(
+            "QTextEdit{background:rgba(0,0,0,0.18);color:#bbb;"
+            "font-family:monospace;font-size:10px;"
+            "border:1px solid rgba(255,255,255,0.10);border-radius:6px;padding:4px;}")
+        lay.addWidget(self.desc)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.addStretch()
+        self.edit_btn = QPushButton("edit")
+        self.edit_btn.setFixedSize(52, 20)
+        self.edit_btn.clicked.connect(self._toggle_edit)
+        btn_row.addWidget(self.edit_btn)
+        lay.addLayout(btn_row)
+
+        self._editing = False
+        self._style_edit_button()
+        self.show_project(None)
+
+    # ---- appearance --------------------------------------------------------
     def set_accent(self, accent):
         self.accent = accent
-        self.canvas.accent = accent
-        self.canvas.update()
+        self._style_edit_button()
 
-    def show_project(self, name, path=None):
-        """Load a project by name and draw it."""
+    def _style_edit_button(self):
+        self.edit_btn.setStyleSheet(
+            f"QPushButton{{background:rgba(0,0,0,0.35);color:{self.accent};"
+            f"border:1px solid {self.accent};border-radius:4px;"
+            f"font-family:monospace;font-size:10px;}}"
+            f"QPushButton:hover{{background:rgba(255,255,255,0.15);}}")
+
+    # ---- node metadata -----------------------------------------------------
+    def set_node_meta(self, meta):
+        """Give the pane the node list from the API so tiles can show the same
+        titles and icons the palette uses."""
+        self._meta = meta or {}
+        if self.project:
+            self.show_project(self.project)
+
+    def _icon_for(self, type_id):
+        try:
+            from canvas import resolve_icon_path
+            path = resolve_icon_path(type_id)
+            if path and os.path.isfile(path):
+                return QPixmap(path)
+        except Exception:
+            pass
+        return None
+
+    # ---- content -----------------------------------------------------------
+    def show_project(self, name):
+        """Show one project, or clear the pane when name is None.
+
+        Called with None for both 'nothing selected' and 'several selected',
+        since neither has a single project to describe.
+        """
+        self.project = name
+        self._set_editing(False)
+        self.grid.clear()
+
         if not name:
-            self.title.setText("select a project")
-            self.info.setText("")
-            self.canvas.set_workflow(None)
+            self.title.setText("nothing selected")
+            self.info.setText("select a single project to see what's in it")
+            self.desc.setPlainText("")
+            self.desc.setVisible(False)
+            self.desc_label.setVisible(False)
+            self.edit_btn.setVisible(False)
             return
-        wf = None
+
+        self.desc.setVisible(True)
+        self.desc_label.setVisible(True)
+        self.edit_btn.setVisible(True)
+
         try:
             from storage import load_project
-            wf = load_project(name)
+            wf = load_project(name) or {}
         except Exception:
-            wf = None
-        self.title.setText(name)
-        self.canvas.set_workflow(wf)
+            wf = {}
 
-        if not wf:
-            self.info.setText("could not read this project")
-            return
+        self.title.setText(name)
         nodes = wf.get("nodes") or []
-        kind = "servo / arduino" if wf.get("kind") == "servo" else "workflow"
-        bits = [f"{len(nodes)} node{'s' if len(nodes) != 1 else ''}", kind]
+        servo = (wf.get("kind") == "servo")
+
+        # count how many of each node type this project uses
+        counts = {}
+        for n in nodes:
+            t = n.get("type")
+            if t:
+                counts[t] = counts.get(t, 0) + 1
+
+        kind = "servo / arduino" if servo else "workflow"
+        bits = [f"{len(nodes)} node{'s' if len(nodes) != 1 else ''}",
+                f"{len(counts)} type{'s' if len(counts) != 1 else ''}", kind]
         try:
             from storage import PROJECTS_DIR
+            from datetime import datetime
             fp = os.path.join(PROJECTS_DIR, f"{name}.json")
             if os.path.isfile(fp):
                 ts = datetime.fromtimestamp(os.path.getmtime(fp))
-                bits.append(f"saved {ts.strftime('%d %b %H:%M')}")
+                bits.append(ts.strftime("%d %b %H:%M"))
         except Exception:
             pass
         self.info.setText("   ".join(bits))
+
+        # build the inventory, most-used first
+        for type_id, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            meta = self._meta.get(type_id) or {}
+            title = meta.get("title") or type_id.split(".")[-1].replace("_", " ").title()
+            tile = NodeTile(type_id, title, count, self._icon_for(type_id),
+                            servo=type_id.startswith("device."))
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(62, 62))
+            self.grid.addItem(item)
+            self.grid.setItemWidget(item, tile)
+
+        if not counts:
+            item = QListWidgetItem("empty project — no nodes yet")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.grid.addItem(item)
+
+        self.desc.setPlainText(wf.get("description", ""))
+
+    # ---- description editing ----------------------------------------------
+    def _toggle_edit(self):
+        if self._editing:
+            self._save_description()
+            self._set_editing(False)
+        else:
+            self._set_editing(True)
+
+    def _set_editing(self, editing):
+        self._editing = editing
+        self.desc.setReadOnly(not editing)
+        self.edit_btn.setText("save" if editing else "edit")
+        if editing:
+            self.desc.setStyleSheet(
+                "QTextEdit{background:rgba(0,0,0,0.35);color:#eee;"
+                "font-family:monospace;font-size:10px;"
+                f"border:1px solid {self.accent};border-radius:6px;padding:4px;}}")
+            self.desc.setFocus()
+        else:
+            self.desc.setStyleSheet(
+                "QTextEdit{background:rgba(0,0,0,0.18);color:#bbb;"
+                "font-family:monospace;font-size:10px;"
+                "border:1px solid rgba(255,255,255,0.10);border-radius:6px;padding:4px;}")
+
+    def _save_description(self):
+        if not self.project:
+            return
+        try:
+            from storage import load_project, save_project
+            wf = load_project(self.project) or {}
+            wf["description"] = self.desc.toPlainText().strip()
+            save_project(self.project, wf)
+        except Exception as e:
+            print(f"  [preview] could not save description: {e}")

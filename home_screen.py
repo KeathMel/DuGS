@@ -695,10 +695,14 @@ def button_style(color, circular=False):
     radius = "19px" if circular else "4px"
     pad = "0px" if circular else "8px 14px"
     size = "font-size:18px;" if circular else "font-size:14px;"
+    # A faint dark fill rather than fully transparent: with a see-through
+    # background there is nothing behind the button, so a transparent one
+    # disappears against the desktop.
     return (
-        f"QPushButton{{background:transparent;color:{color};border:1px solid {color};"
+        f"QPushButton{{background:rgba(0,0,0,0.35);color:{color};"
+        f"border:1px solid {color};"
         f"border-radius:{radius};padding:{pad};font-family:monospace;{size}}}"
-        f"QPushButton:hover{{background:rgba(255,255,255,0.12);}}"
+        f"QPushButton:hover{{background:rgba(255,255,255,0.15);}}"
     )
 
 
@@ -800,7 +804,9 @@ class Home(QWidget):
 
         # selecting a project draws it in the preview pane
         try:
-            self.proj_browser.grid_host.currentItemChanged.connect(
+            # selectionChanged (not currentItemChanged) so selecting several
+            # projects clears the pane instead of showing the last one clicked
+            self.proj_browser.grid_host.itemSelectionChanged.connect(
                 self._on_project_selected)
         except Exception:
             pass
@@ -817,6 +823,7 @@ class Home(QWidget):
 
         self.section = "project"
         self.apply_theme()
+        self._load_node_meta()
         self.select("project")
         register_themed_screen(self)
 
@@ -836,13 +843,36 @@ class Home(QWidget):
             pass
         self.logo_mark.setVisible(False)   # no icon shipped: just the wordmark
 
-    def _on_project_selected(self, item, _prev=None):
-        """Draw the highlighted project in the preview pane."""
-        if item is None:
+    def _on_project_selected(self):
+        """Show the selected project's contents.
+
+        Exactly one selection shows its detail; none or several clears the
+        pane, since there is no single project to describe.
+        """
+        try:
+            items = self.proj_browser.grid_host.selectedItems()
+        except Exception:
+            items = []
+        if len(items) != 1:
             self.preview.show_project(None)
             return
+        item = items[0]
         name = item.data(Qt.ItemDataRole.UserRole) or item.text()
         self.preview.show_project(name)
+
+    def _load_node_meta(self):
+        """Fetch the node list once so the inventory tiles can use the same
+        titles and icons as the editor palette."""
+        try:
+            from api_client import api_get
+            resp = api_get("/nodes") or {}
+            # the endpoint returns {"nodes": [...]}, older builds a bare list
+            items = resp.get("nodes", resp) if isinstance(resp, dict) else resp
+            meta = {n["type"]: n for n in items
+                    if isinstance(n, dict) and n.get("type")}
+            self.preview.set_node_meta(meta)
+        except Exception:
+            pass   # no API running: tiles fall back to names derived from type
 
     # -- theme -------------------------------------------------------------
     def _btn_style(self, color, circular=False):
