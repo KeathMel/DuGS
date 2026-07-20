@@ -16,11 +16,12 @@ import weakref
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QListWidget,
     QListWidgetItem, QStackedWidget, QInputDialog, QMenu, QMessageBox, QLineEdit,
-    QDialog, QColorDialog, QFileDialog, QSlider
+    QDialog, QColorDialog, QFileDialog, QSlider, QFrame, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPainterPath, QIcon, QPixmap, QAction
 
+from home_preview import PreviewPane
 from storage import (
     PROJECTS_DIR, TABELS_DIR, DOWNLOADS, _ensure, _path,
     list_projects, list_tabels, save_project, new_tabel,
@@ -733,34 +734,49 @@ class Home(QWidget):
         self.app = app
         self.settings = load_home_ui_settings()
 
-        root = QVBoxLayout(self); root.setContentsMargins(24, 18, 24, 18); root.setSpacing(14)
+        root = QVBoxLayout(self); root.setContentsMargins(24, 16, 24, 14); root.setSpacing(12)
 
+        # ---- top bar: logo mark + wordmark on the left, + New on the right
         topbar = QHBoxLayout()
+        topbar.setSpacing(10)
+        self.logo_mark = QLabel()
+        self.logo_mark.setFixedSize(30, 30)
+        self.logo_mark.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.logo_mark.mousePressEvent = lambda _e: self.app.go_home()
+        self._load_logo_mark()
+        topbar.addWidget(self.logo_mark)
+
         self.dugs = QLabel("DuGS")
         self.dugs.setCursor(Qt.CursorShape.PointingHandCursor)
         self.dugs.mousePressEvent = lambda _e: self.app.go_home()
-        topbar.addWidget(self.dugs); topbar.addStretch()
+        topbar.addWidget(self.dugs)
+        topbar.addStretch()
         self.new_btn = QPushButton("+ New")
         self.new_btn.clicked.connect(self.new_item)
         topbar.addWidget(self.new_btn)
         root.addLayout(topbar)
 
-        tabs = QHBoxLayout(); tabs.addStretch()
+        # ---- tabs: one connected strip spanning the full width, so the space
+        # reads as a deliberate bar instead of three buttons floating in a gap
+        tabs = QHBoxLayout()
+        tabs.setSpacing(0)
         self.tab_projects = QPushButton("Projects")
         self.tab_tabels = QPushButton("Tabels")
         self.tab_creds = QPushButton("Credentials")
-        for t in (self.tab_projects, self.tab_tabels, self.tab_creds):
-            t.setFixedWidth(200)
         self.tab_projects.clicked.connect(lambda: self.select("project"))
         self.tab_tabels.clicked.connect(lambda: self.select("tabel"))
         self.tab_creds.clicked.connect(lambda: self.select("credential"))
-        tabs.addWidget(self.tab_projects); tabs.addSpacing(12)
-        tabs.addWidget(self.tab_tabels); tabs.addSpacing(12)
-        tabs.addWidget(self.tab_creds)
-        tabs.addStretch()
+        for t in (self.tab_projects, self.tab_tabels, self.tab_creds):
+            t.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            t.setFixedHeight(34)
+            tabs.addWidget(t, 1)
         root.addLayout(tabs)
 
+        # ---- work area: the browser on the left, a live preview on the right
         btn_color = self.settings.get("button_color", DEFAULT_BUTTON_COLOR)
+        body = QHBoxLayout()
+        body.setSpacing(14)
+
         self.browsers = QStackedWidget()
         self.proj_browser = IconBrowser("project", app, accent=btn_color)
         self.tabel_browser = IconBrowser("tabel", app, accent=btn_color)
@@ -768,7 +784,26 @@ class Home(QWidget):
         self.browsers.addWidget(self.proj_browser)
         self.browsers.addWidget(self.tabel_browser)
         self.browsers.addWidget(self.creds_panel)
-        root.addWidget(self.browsers, 1)
+
+        # an outline around the file area so it looks like a defined region
+        self.browser_frame = QFrame()
+        self.browser_frame.setObjectName("browserFrame")
+        bf = QVBoxLayout(self.browser_frame)
+        bf.setContentsMargins(10, 10, 10, 10)
+        bf.addWidget(self.browsers)
+        body.addWidget(self.browser_frame, 3)
+
+        self.preview = PreviewPane(accent=btn_color)
+        self.preview.setFixedWidth(300)
+        body.addWidget(self.preview, 0)
+        root.addLayout(body, 1)
+
+        # selecting a project draws it in the preview pane
+        try:
+            self.proj_browser.grid_host.currentItemChanged.connect(
+                self._on_project_selected)
+        except Exception:
+            pass
 
         # settings gear, pinned bottom-left
         bottom_bar = QHBoxLayout()
@@ -785,22 +820,60 @@ class Home(QWidget):
         self.select("project")
         register_themed_screen(self)
 
+    def _load_logo_mark(self):
+        """The app icon shown next to the DuGS wordmark, if it is available."""
+        try:
+            here = os.path.dirname(os.path.abspath(__file__))
+            for name in ("dugs-64.png", "dugs.png", "dugs-128.png"):
+                fp = os.path.join(here, "icons", name)
+                if os.path.isfile(fp):
+                    pm = QPixmap(fp).scaled(
+                        30, 30, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+                    self.logo_mark.setPixmap(pm)
+                    return
+        except Exception:
+            pass
+        self.logo_mark.setVisible(False)   # no icon shipped: just the wordmark
+
+    def _on_project_selected(self, item, _prev=None):
+        """Draw the highlighted project in the preview pane."""
+        if item is None:
+            self.preview.show_project(None)
+            return
+        name = item.data(Qt.ItemDataRole.UserRole) or item.text()
+        self.preview.show_project(name)
+
     # -- theme -------------------------------------------------------------
     def _btn_style(self, color, circular=False):
         return button_style(color, circular)
 
-    def _tab_style(self, active, color):
+    def _tab_style(self, active, color, pos="mid"):
+        """Segmented-control styling: the three tabs form one connected strip.
+
+        `pos` says whether this is the left end, the right end or a middle
+        segment, so only the outer corners get rounded and neighbours share a
+        single border line instead of each drawing its own.
+        """
+        radius = {
+            "left":  "border-top-left-radius:5px;border-bottom-left-radius:5px;",
+            "right": "border-top-right-radius:5px;border-bottom-right-radius:5px;",
+            "mid":   "",
+        }[pos]
+        # middle and right segments drop their left border so the strip reads
+        # as one control rather than three touching buttons
+        no_left = "border-left:none;" if pos in ("mid", "right") else ""
         if active:
             return (
                 f"QPushButton{{background:rgba(255,255,255,0.16);color:{color};"
-                f"border:1px solid {color};border-radius:4px;padding:10px;text-align:left;"
-                f"font-family:monospace;font-size:14px;}}"
+                f"border:1px solid {color};{no_left}{radius}"
+                f"padding:8px 12px;font-family:monospace;font-size:13px;}}"
             )
         return (
-            "QPushButton{background:transparent;color:#bbb;"
-            "border:1px solid #666;border-radius:4px;padding:10px;text-align:left;"
-            "font-family:monospace;font-size:14px;}"
-            f"QPushButton:hover{{color:{color};border-color:{color};}}"
+            "QPushButton{background:rgba(0,0,0,0.20);color:#bbb;"
+            f"border:1px solid #5a5a5a;{no_left}{radius}"
+            "padding:8px 12px;font-family:monospace;font-size:13px;}"
+            f"QPushButton:hover{{color:{color};background:rgba(255,255,255,0.07);}}"
         )
 
     def apply_theme(self):
@@ -815,16 +888,22 @@ class Home(QWidget):
         self.new_btn.setStyleSheet(self._btn_style(btn_color))
         self.settings_btn.setStyleSheet(self._btn_style(btn_color, circular=True))
 
-        for t, sec in (
-            (self.tab_projects, "project"),
-            (self.tab_tabels, "tabel"),
-            (self.tab_creds, "credential"),
+        for t, sec, pos in (
+            (self.tab_projects, "project", "left"),
+            (self.tab_tabels, "tabel", "mid"),
+            (self.tab_creds, "credential", "right"),
         ):
-            t.setStyleSheet(self._tab_style(sec == self.section, btn_color))
+            t.setStyleSheet(self._tab_style(sec == self.section, btn_color, pos))
+
+        # the outline around the file area
+        self.browser_frame.setStyleSheet(
+            "QFrame#browserFrame{background:rgba(0,0,0,0.18);"
+            "border:1px solid rgba(255,255,255,0.10);border-radius:8px;}")
 
         self.proj_browser.set_accent(btn_color)
         self.tabel_browser.set_accent(btn_color)
         self.creds_panel.set_accent(btn_color)
+        self.preview.set_accent(btn_color)
 
         self.update()  # repaint background (grey or image)
 
@@ -846,9 +925,14 @@ class Home(QWidget):
     def select(self, section):
         self.section = section
         btn_color = self.settings.get("button_color", DEFAULT_BUTTON_COLOR)
-        self.tab_projects.setStyleSheet(self._tab_style(section == "project", btn_color))
-        self.tab_tabels.setStyleSheet(self._tab_style(section == "tabel", btn_color))
-        self.tab_creds.setStyleSheet(self._tab_style(section == "credential", btn_color))
+        self.tab_projects.setStyleSheet(
+            self._tab_style(section == "project", btn_color, "left"))
+        self.tab_tabels.setStyleSheet(
+            self._tab_style(section == "tabel", btn_color, "mid"))
+        self.tab_creds.setStyleSheet(
+            self._tab_style(section == "credential", btn_color, "right"))
+        # the preview only makes sense for projects
+        self.preview.setVisible(section == "project")
         if section == "project":
             self.browsers.setCurrentWidget(self.proj_browser); self.proj_browser.refresh()
             self.new_btn.setText("+ New Project"); self.new_btn.setVisible(True)

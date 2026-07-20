@@ -162,11 +162,14 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
 
         root.addLayout(work, 1)
 
-        # everything starts hidden until the user pulls a panel open
+        # Nothing is saved until construction finishes: hiding the panels here
+        # would otherwise overwrite the stored layout with "all closed" before
+        # _restore_layout gets a chance to read it.
+        self._loading_layout = True
         for side in ("left", "right", "bottom"):
             self.toggle_panel(side, False)
-
         self._restore_layout()
+        self._loading_layout = False
         self._main_split.splitterMoved.connect(lambda _p, _i: self._save_layout())
 
         # --- undo/redo + autosave state ---
@@ -408,6 +411,20 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
             arrow.set_open(is_open)
         self._save_layout()
 
+    def _default_layout(self):
+        """The layout a brand-new user starts with.
+
+        Rather than opening to a blank editor with no idea what the panels do,
+        the first launch lays out the familiar arrangement: tools on the left,
+        the node palette on the right, code/JSON along the bottom. Everything
+        can then be moved or removed.
+        """
+        return {
+            "left": {"open": True, "modules": ["settings", "other_projects", "run_log"]},
+            "right": {"open": True, "modules": ["nodes"]},
+            "bottom": {"open": False, "modules": ["json"]},
+        }
+
     def toggle_module(self, module, panel, wanted):
         """Tick/untick a module in a panel's [+] menu."""
         if wanted:
@@ -417,15 +434,45 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
             panel.add_module(module)
             if not panel.isVisible():
                 self.toggle_panel(panel.side, True)
-            try:
-                module.on_project_opened(self.current_project)
-            except Exception:
-                pass
+            self._populate_module(module)
         else:
             if module.host is not None:
                 module.host.remove_module(module)
         self.apply_theme()
         self._save_layout()
+
+    def _populate_module(self, module):
+        """Fill a module with data the moment it is added.
+
+        A module builds an empty widget; the content normally arrives on the
+        next project-open or workflow change. Without this, adding one
+        mid-session shows an empty box until the user reopens the workflow.
+        """
+        try:
+            module.on_project_opened(self.current_project)
+        except Exception:
+            pass
+        # the palette and the JSON/code view are rebuilt by the editor, so
+        # trigger the same refreshes opening a project would have done
+        try:
+            if module.ID == "nodes":
+                self.load_palette()
+            elif module.ID == "json":
+                self.refresh_json()
+            elif module.ID == "other_projects":
+                self.refresh_other_projects()
+            elif module.ID == "settings":
+                self.show_node_settings(self.canvas.selected)
+            elif module.ID == "run_log":
+                last = getattr(self, "_last_log_text", "")
+                if last:
+                    module.widget.setText(last)
+        except Exception as e:
+            print(f"  [module warn] populating {module.ID}: {e}")
+        try:
+            module.refresh()
+        except Exception:
+            pass
 
     def move_module(self, module, target_panel):
         """Middle-mouse drag dropped a module onto another panel."""
@@ -676,6 +723,8 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
     def _save_layout(self):
         """Remember which panels are open and which modules each one holds, so
         the layout you build is the one you get back next launch."""
+        if getattr(self, "_loading_layout", False):
+            return          # still building; don't persist a half-built state
         try:
             layout = {}
             for side, box in getattr(self, "panels_by_side", {}).items():
@@ -698,9 +747,13 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
                 self._main_split.setSizes(st["main"])
         except Exception:
             pass
-        # put the saved modules back where they were
+        # put the saved modules back where they were. With nothing saved yet
+        # (a first-ever launch) fall back to a sensible starting layout.
         by_id = {m.ID: m for m in getattr(self, "all_modules", [])}
-        for side, info in (st.get("panels") or {}).items():
+        saved = st.get("panels")
+        if not saved:
+            saved = self._default_layout()
+        for side, info in saved.items():
             box = getattr(self, "panels_by_side", {}).get(side)
             if box is None:
                 continue
@@ -708,6 +761,7 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
                 mod = by_id.get(mid)
                 if mod is not None and mod.host is None:
                     box.add_module(mod)
+                    self._populate_module(mod)
             if info.get("open"):
                 self.toggle_panel(side, True)
             try:
@@ -882,10 +936,13 @@ class Editor(QWidget, SettingsPanelMixin, NodePopupMixin):
             c.running_node = None; c.update()
 
     def _append_result(self, line):
-        prev = self.results.toPlainText()
+        prev = self.results.toPlainText() or getattr(self, "_last_log_text", "")
         # keep the log readable: cap to last ~40 lines
         lines = (prev.splitlines() + [line])[-40:]
-        self.results.setPlainText("\n".join(lines))
+        text = "\n".join(lines)
+        # kept so the log survives being removed and added back as a module
+        self._last_log_text = text
+        self.results.setPlainText(text)
         sb = self.results.verticalScrollBar()
         sb.setValue(sb.maximum())
 
