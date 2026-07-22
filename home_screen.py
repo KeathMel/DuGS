@@ -145,6 +145,9 @@ class IconBrowser(QWidget):
         # both are fixed/independent of the customizable button/accent color.
         self._icon = file_icon(64, NORMAL_ICON_BLUE)
         self._icon_servo = file_icon(64, SERVO_RED)
+        # memory banks share the file look but in the accent colour so they read
+        # as a different thing from tabels in the combined Data view
+        self._icon_memory = file_icon(64, accent or DEFAULT_BUTTON_COLOR)
         lay = QVBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0)
         self.grid_host = QListWidget()
         self.grid_host.setViewMode(QListWidget.ViewMode.IconMode)
@@ -183,17 +186,35 @@ class IconBrowser(QWidget):
 
     def refresh(self):
         self.grid_host.clear()
+        if self.kind == "data":
+            # one combined view of Tabels + Memory banks, each item tagged with
+            # its real kind so open/delete/icon still do the right thing —
+            # exactly how Projects folds Normal and Servo into one grid.
+            from storage import list_memory_banks
+            for n in list_tabels():
+                self._add_item(n, "tabel")
+            for n in list_memory_banks():
+                self._add_item(n, "memory")
+            return
         for n in self.names():
-            # servo projects get a RED file icon so they stand out from the
-            # normal (accent-colored) workflow projects at a glance.
             is_servo = (self.kind == "project" and project_kind(n) == "servo")
-            icon = self._icon_servo if is_servo else self._icon
-            it = QListWidgetItem(icon, n)
-            it.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-            it.setSizeHint(QSize(96, 96))
-            if is_servo:
-                it.setForeground(QColor(SERVO_RED))
-            self.grid_host.addItem(it)
+            self._add_item(n, "servo" if is_servo else self.kind)
+
+    def _add_item(self, name, item_kind):
+        # colour: servo=red, memory=accent-ish, everything else the normal icon
+        if item_kind == "servo":
+            icon = self._icon_servo
+        elif item_kind == "memory":
+            icon = self._icon_memory
+        else:
+            icon = self._icon
+        it = QListWidgetItem(icon, name)
+        it.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        it.setSizeHint(QSize(96, 96))
+        it.setData(Qt.ItemDataRole.UserRole, item_kind)   # remember what it is
+        if item_kind == "servo":
+            it.setForeground(QColor(SERVO_RED))
+        self.grid_host.addItem(it)
 
     def menu(self, pos):
         it = self.grid_host.itemAt(pos)
@@ -218,11 +239,22 @@ class IconBrowser(QWidget):
             m.addAction(act)
         m.exec(self.grid_host.mapToGlobal(pos))
 
+    def _dir_of(self, name):
+        """Which storage folder an item lives in, respecting its kind so the
+        combined Data view can hold both tabels and memory banks."""
+        from storage import MEMORY_DIR
+        k = self._kind_of(name)
+        if k == "project":
+            return PROJECTS_DIR
+        if k == "memory":
+            return MEMORY_DIR
+        return TABELS_DIR
+
     def action(self, label, names):
         """Runs one action on one or more selected items at once
         (download/duplicate/delete all support a batch; open/rename only
         make sense for a single item)."""
-        d = PROJECTS_DIR if self.kind == "project" else TABELS_DIR
+        d = self._dir_of(names[0]) if names else TABELS_DIR
         if label == "Open":
             if names: self.open(names[0])
         elif label == "Download":
@@ -266,9 +298,21 @@ class IconBrowser(QWidget):
                         pass
                 self.refresh()
 
+    def _kind_of(self, name):
+        """In the combined Data view each item knows if it's a tabel or a
+        memory bank; elsewhere the browser's own kind applies."""
+        if self.kind != "data":
+            return self.kind
+        for i in range(self.grid_host.count()):
+            it = self.grid_host.item(i)
+            if it.text() == name:
+                return it.data(Qt.ItemDataRole.UserRole) or "tabel"
+        return "tabel"
+
     def open(self, name):
-        if self.kind == "project": self.app.open_project(name)
-        elif self.kind == "memory":
+        k = self._kind_of(name)
+        if k == "project": self.app.open_project(name)
+        elif k == "memory":
             # a full bank editor is optional; if the app doesn't provide one,
             # banks are still fully usable through the Memory nodes
             if hasattr(self.app, "open_memory"):
@@ -775,14 +819,12 @@ class Home(QWidget):
         tabs = QHBoxLayout()
         tabs.setSpacing(0)
         self.tab_projects = QPushButton("Projects")
-        self.tab_tabels = QPushButton("Tabels")
-        self.tab_memory = QPushButton("Memory")
+        self.tab_data = QPushButton("Data")
         self.tab_creds = QPushButton("Credentials")
         self.tab_projects.clicked.connect(lambda: self.select("project"))
-        self.tab_tabels.clicked.connect(lambda: self.select("tabel"))
-        self.tab_memory.clicked.connect(lambda: self.select("memory"))
+        self.tab_data.clicked.connect(lambda: self.select("data"))
         self.tab_creds.clicked.connect(lambda: self.select("credential"))
-        for t in (self.tab_projects, self.tab_tabels, self.tab_memory, self.tab_creds):
+        for t in (self.tab_projects, self.tab_data, self.tab_creds):
             t.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             t.setFixedHeight(34)
             tabs.addWidget(t, 1)
@@ -795,12 +837,10 @@ class Home(QWidget):
 
         self.browsers = QStackedWidget()
         self.proj_browser = IconBrowser("project", app, accent=btn_color)
-        self.tabel_browser = IconBrowser("tabel", app, accent=btn_color)
-        self.memory_browser = IconBrowser("memory", app, accent=btn_color)
+        self.data_browser = IconBrowser("data", app, accent=btn_color)
         self.creds_panel = CredentialsPanel(app, accent=btn_color)
         self.browsers.addWidget(self.proj_browser)
-        self.browsers.addWidget(self.tabel_browser)
-        self.browsers.addWidget(self.memory_browser)
+        self.browsers.addWidget(self.data_browser)
         self.browsers.addWidget(self.creds_panel)
 
         # an outline around the file area so it looks like a defined region
@@ -934,7 +974,7 @@ class Home(QWidget):
 
         for t, sec, pos in (
             (self.tab_projects, "project", "left"),
-            (self.tab_tabels, "tabel", "mid"),
+            (self.tab_data, "data", "mid"),
             (self.tab_creds, "credential", "right"),
         ):
             t.setStyleSheet(self._tab_style(sec == self.section, btn_color, pos))
@@ -945,8 +985,7 @@ class Home(QWidget):
             "border:1px solid rgba(255,255,255,0.10);border-radius:8px;}")
 
         self.proj_browser.set_accent(btn_color)
-        self.tabel_browser.set_accent(btn_color)
-        self.memory_browser.set_accent(btn_color)
+        self.data_browser.set_accent(btn_color)
         self.creds_panel.set_accent(btn_color)
         self.preview.set_accent(btn_color)
 
@@ -972,10 +1011,8 @@ class Home(QWidget):
         btn_color = self.settings.get("button_color", DEFAULT_BUTTON_COLOR)
         self.tab_projects.setStyleSheet(
             self._tab_style(section == "project", btn_color, "left"))
-        self.tab_tabels.setStyleSheet(
-            self._tab_style(section == "tabel", btn_color, "mid"))
-        self.tab_memory.setStyleSheet(
-            self._tab_style(section == "memory", btn_color, "mid"))
+        self.tab_data.setStyleSheet(
+            self._tab_style(section == "data", btn_color, "mid"))
         self.tab_creds.setStyleSheet(
             self._tab_style(section == "credential", btn_color, "right"))
         # the preview only makes sense for projects
@@ -983,12 +1020,9 @@ class Home(QWidget):
         if section == "project":
             self.browsers.setCurrentWidget(self.proj_browser); self.proj_browser.refresh()
             self.new_btn.setText("+ New Project"); self.new_btn.setVisible(True)
-        elif section == "tabel":
-            self.browsers.setCurrentWidget(self.tabel_browser); self.tabel_browser.refresh()
-            self.new_btn.setText("+ New Tabel"); self.new_btn.setVisible(True)
-        elif section == "memory":
-            self.browsers.setCurrentWidget(self.memory_browser); self.memory_browser.refresh()
-            self.new_btn.setText("+ New Memory Bank"); self.new_btn.setVisible(True)
+        elif section == "data":
+            self.browsers.setCurrentWidget(self.data_browser); self.data_browser.refresh()
+            self.new_btn.setText("+ New"); self.new_btn.setVisible(True)
         else:
             self.browsers.setCurrentWidget(self.creds_panel); self.creds_panel.refresh()
             self.new_btn.setVisible(False)
@@ -1005,15 +1039,22 @@ class Home(QWidget):
                     save_project(name, {"name": name, "kind": kind,
                                         "nodes": [], "connections": {}})
                     self.app.open_project(name)
-        elif self.section == "memory":
-            name, ok = QInputDialog.getText(self, "New Memory Bank", "Bank name:")
-            if ok and name.strip():
-                from storage import new_memory_bank
-                name = name.strip(); new_memory_bank(name); self.select("memory")
-        else:
-            name, ok = QInputDialog.getText(self, "New Tabel", "Tabel name:")
-            if ok and name.strip():
-                name = name.strip(); new_tabel(name); self.app.open_tabel(name)
+        elif self.section == "data":
+            # Data holds both Tabels and Memory banks, so ask which one —
+            # the same way New Project asks Normal vs Servo
+            choice, ok = QInputDialog.getItem(
+                self, "New", "Create:", ["Tabel", "Memory Bank"], 0, False)
+            if not ok:
+                return
+            if choice == "Memory Bank":
+                name, ok = QInputDialog.getText(self, "New Memory Bank", "Bank name:")
+                if ok and name.strip():
+                    from storage import new_memory_bank
+                    new_memory_bank(name.strip()); self.select("data")
+            else:
+                name, ok = QInputDialog.getText(self, "New Tabel", "Tabel name:")
+                if ok and name.strip():
+                    new_tabel(name.strip()); self.app.open_tabel(name.strip())
 
 
 class NewProjectDialog(QDialog):
