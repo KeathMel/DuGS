@@ -106,3 +106,144 @@ class DropTextEdit(QPlainTextEdit):
         if self._on_change: self._on_change()
 
 
+
+# ---------------------------------------------------------------------------
+# Expandable text box + hover-help label — used by the node popup so big text
+# fields (Note, system prompt, Code, Text Template) can be edited comfortably
+# and so parameter rows stay short with the explanation tucked into a tooltip.
+# ---------------------------------------------------------------------------
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDialog,
+)
+from PyQt6.QtCore import Qt
+
+
+class ExpandableText(QWidget):
+    """A multiline box with an expand button at the top-right.
+
+    Pressing expand opens the same text in a large movable panel so long
+    content (a system prompt, a block of code, a note) can be edited without
+    squinting at a tiny box. Editing either view keeps the other in sync.
+    """
+
+    def __init__(self, text="", on_change=None, title="TEXT"):
+        super().__init__()
+        self._on_change = on_change
+        self._title = title
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+
+        bar = QHBoxLayout()
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.addStretch()
+        self.expand_btn = QPushButton("\u2921")   # diagonal expand arrows
+        self.expand_btn.setFixedSize(20, 16)
+        self.expand_btn.setToolTip("expand this box to a big editor")
+        self.expand_btn.setStyleSheet(
+            "QPushButton{font-size:11px;padding:0px;border:1px solid #555;"
+            "color:#aaa;border-radius:3px;background:rgba(0,0,0,0.25);}"
+            "QPushButton:hover{color:#fff;border-color:#999;}")
+        self.expand_btn.clicked.connect(self._expand)
+        bar.addWidget(self.expand_btn)
+        lay.addLayout(bar)
+
+        self.edit = DropTextEdit(text)
+        self.edit.setFixedHeight(70)
+        if on_change is not None:
+            self.edit.textChanged.connect(on_change)
+        lay.addWidget(self.edit)
+
+    # behave enough like a text edit that existing code keeps working
+    def toPlainText(self):
+        return self.edit.toPlainText()
+
+    def setPlainText(self, t):
+        self.edit.setPlainText(t)
+
+    @property
+    def textChanged(self):
+        return self.edit.textChanged
+
+    def _expand(self):
+        dlg = _ExpandDialog(self.edit.toPlainText(), self._title, self)
+        dlg.exec()
+
+
+class _ExpandDialog(QDialog):
+    """The big pop-out editor. Sits against one side of the screen and can be
+    flipped to the other side with the button in its top bar."""
+
+    def __init__(self, text, title, source):
+        super().__init__(source)
+        self.source = source
+        self.setWindowTitle(title)
+        self.setModal(False)
+        self._side = "right"
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+
+        bar = QHBoxLayout()
+        tlabel = QLabel(title)
+        tlabel.setStyleSheet("color:#ccc;font-family:monospace;font-size:11px;font-weight:bold;")
+        bar.addWidget(tlabel)
+        bar.addStretch()
+        self.side_btn = QPushButton("\u21c4 side")   # flip left/right
+        self.side_btn.setFixedHeight(20)
+        self.side_btn.clicked.connect(self._flip_side)
+        bar.addWidget(self.side_btn)
+        close = QPushButton("done")
+        close.setFixedHeight(20)
+        close.clicked.connect(self.accept)
+        bar.addWidget(close)
+        lay.addLayout(bar)
+
+        self.big = DropTextEdit(text)
+        self.big.setStyleSheet("font-family:monospace;font-size:13px;")
+        lay.addWidget(self.big, 1)
+
+        # editing the big box flows straight back into the little one
+        self.big.textChanged.connect(self._sync_back)
+        self._place()
+
+    def _sync_back(self):
+        self.source.setPlainText(self.big.toPlainText())
+
+    def _flip_side(self):
+        self._side = "left" if self._side == "right" else "right"
+        self._place()
+
+    def _place(self):
+        scr = self.screen().availableGeometry() if self.screen() else None
+        if scr is None:
+            self.resize(600, 700)
+            return
+        w = scr.width() // 2
+        self.resize(w, scr.height())
+        y = scr.top()
+        x = scr.left() if self._side == "left" else scr.left() + scr.width() - w
+        self.move(x, y)
+
+
+class HelpLabel(QWidget):
+    """A parameter label with a small (?) that shows the explanation on hover,
+    so the row stays short instead of carrying a long description inline."""
+
+    def __init__(self, text, help_text="", accent="#7ecfff"):
+        super().__init__()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color:#bbb;font-family:monospace;font-size:11px;")
+        lay.addWidget(lbl)
+        if help_text:
+            q = QLabel("(?)")
+            q.setStyleSheet(f"color:{accent};font-family:monospace;font-size:10px;")
+            q.setToolTip(help_text)
+            q.setCursor(Qt.CursorShape.WhatsThisCursor)
+            lay.addWidget(q)
+        lay.addStretch()

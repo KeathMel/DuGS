@@ -263,8 +263,17 @@ class Canvas(QWidget):
         self.update()
 
     def add_node(self, meta):
+        # place the node at the middle of whatever the user is currently
+        # looking at, not a fixed spot in the far corner. The view maps screen
+        # -> world as world = (screen - offset) / scale, so the centre of the
+        # visible area in world coordinates is:
+        cx = (self.width() / 2 - self.offset.x()) / self.scale
+        cy = (self.height() / 2 - self.offset.y()) / self.scale
+        # a small step per node so several added in a row fan out instead of
+        # landing exactly on top of each other
+        step = (len(self.nodes) % 6) * 22
         n = CanvasNode(meta["type"], meta["title"], meta["inputs"], meta["outputs"],
-                       60 + (len(self.nodes) * 24) % 280, 60 + (len(self.nodes) * 30) % 280,
+                       cx - 45 + step, cy - 30 + step,
                        category=meta.get("category"))
         for p in meta.get("params", []): n.params[p["key"]] = p.get("default")
         self.nodes.append(n); self.select_node(n); self.update(); return n

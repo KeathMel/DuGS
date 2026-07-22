@@ -26,7 +26,8 @@ from PyQt6.QtWidgets import (
 from theme import ACCENT
 from node_base import resolve_expr
 from storage import list_credentials
-from editor_widgets import DragJsonTree, DropLineEdit, DropTextEdit
+from editor_widgets import (DragJsonTree, DropLineEdit, DropTextEdit,
+                            ExpandableText, HelpLabel)
 
 
 class NodePopupMixin:
@@ -175,8 +176,8 @@ class NodePopupMixin:
             cur = node.params.get(key, p.get("default"))
             preview = None; refresh_preview = None
             if ptype == "multiline":
-                w = DropTextEdit(str(cur) if cur is not None else "")
-                w.setFixedHeight(70)
+                w = ExpandableText(str(cur) if cur is not None else "",
+                                   title=p.get("label", key).upper())
                 preview, refresh_preview = make_preview(lambda ww=w: ww.toPlainText())
                 def mk(k, ww, rp):
                     def s(): node.params[k] = ww.toPlainText(); self.mark_changed(push_undo=False); rp()
@@ -217,7 +218,16 @@ class NodePopupMixin:
                 cb = mkt(key, w, refresh_preview); w.editingFinished.connect(cb); w._on_change = cb
                 # also live-update the preview as you type/drop, not just on commit
                 w.textChanged.connect(refresh_preview)
-            form.addRow(p.get("label", key), w)
+            # short label with the explanation on hover, so rows stay compact
+            row_label = p.get("label", key)
+            help_text = p.get("desc", "")
+            ex = p.get("example")
+            res = p.get("result")
+            if ex:
+                help_text = (help_text + "\n\n" if help_text else "") + f"example: {ex}"
+            if res:
+                help_text = (help_text + "\n" if help_text else "") + f"result: {res}"
+            form.addRow(HelpLabel(row_label, help_text), w)
             if preview is not None:
                 form.addRow("", preview)
                 refresh_preview()   # show initial state
