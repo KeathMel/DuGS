@@ -5,13 +5,14 @@ SETTINGS
 ========
 text : the notes content written down inside the node.
 """
+import json
 from node_base import Node
 
 
 class NotesNode(Node):
     TYPE = "data.notes"
     TITLE = "Notes"
-    CATEGORY = "utility"
+    CATEGORY = "data"
     INPUTS = 1
     OUTPUTS = 1
     PARAMS = [
@@ -28,14 +29,17 @@ class NotesNode(Node):
         notes_text = (self.params.get("text") or "").strip()
         if not notes_text:
             return "No notes added."
+        # Truncate to keep the hover box clean if text is huge
         return notes_text[:200] + ("..." if len(notes_text) > 200 else "")
 
     def run(self, items):
         notes_text = self.params.get("text", "") or ""
-
+        
+        # If no input items were passed in, produce 1 item containing the note
         if not items:
             return [{"json": {"notes": notes_text}}]
 
+        # If items are passing through this node, attach the note to every item
         out = []
         for it in items:
             j = dict(it.get("json", {}))
