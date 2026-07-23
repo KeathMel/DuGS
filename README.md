@@ -60,6 +60,19 @@ find . -name __pycache__ -type d -exec rm -rf {} +
 
 ---
 
+## LEAVING WORKFLOWS RUNNING
+
+The app is for building. If you want workflows running when the app is closed —
+on a Pi, a server, a phone — thats the runner:
+
+https://github.com/KeathMel/DuGS_Runner
+
+Build here, hit **Deploy** in the top bar, give it the runners address, and it
+runs there on its own trigger from then on. No GUI on that side, nothing to
+copy by hand.
+
+---
+
 ## THE EDITOR LAYOUT
 
 The tools around the canvas are not fixed in place. Each one is a MODULE, and
@@ -195,20 +208,174 @@ Each of these is a file in `panels/`. Drop a new one in and it turns up in the
 
 ## ADDING A NODE
 
-Normal nodes go in `nodes/`, robotics nodes go in `robotics_nodes/`. Restart
-api.py and it shows up.
+Normal nodes go in `nodes/`, robotics nodes go in `robotics_nodes/`. Drop the
+file in, restart api.py, and it shows up in the palette.
 
-Normal nodes subclass `Node` from `node_base.py` and have a `run()`. Robotics
-nodes subclass `DeviceNode` from `device_base.py`, their type starts with
-`device.`, and they emit C++ instead of running. Copy an existing file thats
-close to what you want and change it.
+Copy an existing file thats close to what you want and change it. Below is one
+node pulled apart so you can see every piece.
 
-To put it in a specific palette group, add its type to `NODE_GROUPS` or
-`ROBOTICS_GROUPS` in `editor.py`.
+### A node, dissected
 
-For its icon, drop a png in `nodes_images/` (or `robotics_nodes_images/`) named
-after the node type. For type `core.set` any of `set.png`, `core.set.png` or
-`core_set.png` works. Add the image before starting the app.
+```python
+"""
+Memory Write — save a value into a Memory Bank.       <- the docstring shows up
+                                                          nowhere in the UI, its
+Longer explanation for whoever reads the file.            for you and for me
+"""
+import os, sys
+from node_base import Node                    # every normal node subclasses this
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import storage                                # anything at the repo root, after
+                                              # that sys.path line
+
+class MemoryWriteNode(Node):
+    TYPE     = "memory.write"    # unique id. Also decides the icon filename and
+                                 # which palette group it lands in
+    TITLE    = "Memory Write"    # what the palette and the node show
+    CATEGORY = "data"            # colours the node and sorts the palette
+    INPUTS   = 1                 # how many input ports (0 = its a trigger)
+    OUTPUTS  = 1                 # how many output ports (2+ = it branches)
+
+    PARAMS = [ ... ]             # every setting the node shows, see below
+
+    def run(self, items):        # the actual work
+        ...
+```
+
+### The parameters, one of each kind
+
+`PARAMS` is a list of dicts. Every one needs `key` (where the value is stored)
+and `label` (what the user sees). Everything else is optional.
+
+```python
+PARAMS = [
+
+    # --- plain text --------------------------------------------------------
+    {"key": "bank_key", "label": "Key", "type": "text", "default": "",
+     "desc": "The key to store the value under.",   # hover help, see below
+     "example": "chat_history"},
+
+    # --- big text box, gets an expand button in the popup ------------------
+    {"key": "value", "label": "Value", "type": "multiline", "default": "",
+     "desc": "What to store. Expressions allowed.",
+     "example": "{{ $json.message }}"},
+
+    # --- number ------------------------------------------------------------
+    {"key": "ttl_minutes", "label": "Expire after (minutes)",
+     "type": "number", "default": 0,
+     "desc": "How long it lives. 0 means never."},
+
+    # --- switch ------------------------------------------------------------
+    {"key": "append", "label": "Append instead of replace",
+     "type": "bool", "default": False},
+
+    # --- dropdown, fixed list ----------------------------------------------
+    {"key": "mode", "label": "Result", "type": "select",
+     "default": "replace", "options": ["replace", "append"]},
+
+    # --- dropdown filled from your saved stuff ------------------------------
+    {"key": "credential", "label": "AI credential", "type": "select",
+     "default": "", "options_from": "credentials"},
+
+    # --- pick a Tabel / a Memory Bank ---------------------------------------
+    {"key": "tabel", "label": "Tabel",  "type": "tabel",  "default": ""},
+    {"key": "bank",  "label": "Memory Bank", "type": "memory", "default": ""},
+
+    # --- raw JSON box --------------------------------------------------------
+    {"key": "payload", "label": "Body", "type": "json", "default": {}},
+
+    # --- only show this while another setting says so -----------------------
+    {"key": "system_prompt", "label": "Compaction instructions",
+     "type": "multiline", "default": "",
+     "show_if": {"compact": True}},        # hidden until 'compact' is on
+]
+```
+
+**Every type:** `text`, `multiline`, `number`, `bool`, `select`, `tabel`,
+`memory`, `json`. Leave `type` out and you get `text`.
+
+**`show_if`** takes `{"other_key": value}`. The row only appears while that
+other setting matches. A list works too: `{"mode": ["a", "b"]}`.
+
+**`desc` / `example` / `result`** are the hover help. The row shows a small
+`(?)` next to the label and hovering it shows those — so the label stays short
+instead of a paragraph wrecking the layout.
+
+### The run method
+
+```python
+    def run(self, items):
+        # `items` is a list of {"json": {...}} — that's the shape everything
+        # passes around. Return the same shape.
+        out = []
+        for it in items:
+            j = it.get("json", {})
+
+            bank = self.p("bank")                  # a raw setting
+            key  = self.rexpr(self.p("key"), j)    # a setting with {{ }} resolved
+                                                   # against THIS item
+
+            storage.memory_set(bank, key, "...")
+
+            out.append({"json": {**j, "memory_key": key}})   # keep the old data,
+        return out                                          # add yours
+```
+
+`self.p(key, default)` reads a setting as-is. `self.rexpr(value, item_json)`
+resolves `{{ $json.x }}` and `{{ $('Other Node').item.json.x }}` against the
+item being processed. Use `rexpr` for anything the user might put an expression
+in.
+
+**Branching:** return a list of lists instead, one per output port —
+`return [true_items, false_items]`. Set `OUTPUTS = 2` to match.
+
+**Triggers:** set `INPUTS = 0`. The engine treats it as a starting point.
+
+### The icon
+
+Drop a png in `nodes_images/` (or `robotics_nodes_images/` for robotics)
+**named after the node type**. For `core.set` any of these work:
+
+```
+set.png            <- just the last bit
+core_set.png       <- dot swapped for underscore   (safest)
+core.set.png       <- the whole type id
+core-set.png
+```
+
+`core_set.png` is the one to use if you are unsure — it always matches.
+
+Two things that catch people out:
+
+- The icons are cached at startup. Add the image **before** launching, or
+  restart after.
+- White backgrounds show up as a white box on the dark node. Use a png with a
+  transparent background, and light-coloured art so it reads.
+
+### Palette grouping
+
+To put the node in a particular group, add its type to `NODE_GROUPS` (or
+`ROBOTICS_GROUPS` for robotics) in `editor.py`. Anything not listed falls into
+MORE.
+
+### Robotics nodes are different
+
+They subclass `DeviceNode` from `device_base.py`, their `TYPE` starts with
+`device.`, and they never run — they emit C++ instead:
+
+```python
+class ServoNode(DeviceNode):
+    TYPE = "device.servo"
+
+    def includes(self): return ["#include <Servo.h>"]        # top of the sketch
+    def globals(self):  return [f"Servo servo_{self.pin_var()};"]
+    def setup(self):    return [f"servo_{self.pin_var()}.attach({self.pin()});"]
+    def loop(self):     return [f"servo_{self.pin_var()}.write({self.num('angle')});"]
+```
+
+`self.pin()` gives the pin name exactly as typed — `9`, `A0`, `GPIO17`,
+`LED_BUILTIN` — so any board works.
 
 ---
 

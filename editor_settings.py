@@ -323,6 +323,26 @@ class SettingsPanelMixin:
                         visible = mode in ("combine_position", "combine_fields", "combine_all")
                     if key == "branch":
                         visible = (mode == "choose_branch")
+
+                # Generic rule: any param can carry "show_if": {"other": value}
+                # and it only appears while that other param matches. This is
+                # what new nodes should use — the per-type blocks above are the
+                # older hardcoded way, kept so existing nodes keep working.
+                spec = next((p for p in params_spec if p.get("key") == key), None)
+                cond = (spec or {}).get("show_if")
+                if cond:
+                    for dep_key, want in cond.items():
+                        have = node.params.get(dep_key)
+                        if isinstance(want, (list, tuple, set)):
+                            ok = have in want
+                        elif isinstance(want, bool):
+                            ok = bool(have) == want
+                        else:
+                            ok = have == want
+                        if not ok:
+                            visible = False
+                            break
+
                 for w in widgets:
                     w.setVisible(visible)
 
